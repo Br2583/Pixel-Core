@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/components/Toast'
 
@@ -8,148 +8,49 @@ interface AuthModalProps {
   defaultTab?: 'signin' | 'register'
 }
 
-type Tab  = 'signin' | 'register'
-type Step = 'form' | 'verify'
-
-function generateCode() {
-  return String(Math.floor(100000 + Math.random() * 900000))
-}
+type Tab = 'signin' | 'register'
 
 export default function AuthModal({ open, onClose, defaultTab = 'signin' }: AuthModalProps) {
-  const [tab,  setTab]  = useState<Tab>(defaultTab)
-  const [step, setStep] = useState<Step>('form')
-  const { login, register } = useAuth()
-  const { showToast } = useToast()
+  const [tab,     setTab]     = useState<Tab>(defaultTab)
+  const { login, register }   = useAuth()
+  const { showToast }         = useToast()
 
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState('')
 
-  // Form fields
   const [signInForm, setSignInForm] = useState({ email: '', password: '' })
   const [regForm,    setRegForm]    = useState({
     name: '', email: '', password: '', confirm: '', subscribe: false,
   })
 
-  // Verification
-  const [codeDigits,    setCodeDigits]    = useState(['', '', '', '', '', ''])
-  const [generatedCode, setGeneratedCode] = useState('')
-  const [resendTimer,   setResendTimer]   = useState(0)
-  const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null)
-  const digitRefs = useRef<(HTMLInputElement | null)[]>(Array(6).fill(null))
-
-  // Reset state when modal opens/closes
   useEffect(() => {
     if (open) {
       setTab(defaultTab)
-      setStep('form')
       setError('')
-      setCodeDigits(['', '', '', '', '', ''])
-      setGeneratedCode('')
-      setResendTimer(0)
-      setPendingAction(null)
     }
   }, [open, defaultTab])
 
   useEffect(() => { setError('') }, [tab])
 
-  // Resend countdown
-  useEffect(() => {
-    if (resendTimer <= 0) return
-    const id = setTimeout(() => setResendTimer(t => t - 1), 1000)
-    return () => clearTimeout(id)
-  }, [resendTimer])
-
-  // Focus first digit box when verify step opens
-  useEffect(() => {
-    if (step === 'verify') {
-      setTimeout(() => digitRefs.current[0]?.focus(), 80)
-    }
-  }, [step])
-
   if (!open) return null
 
-  // ── helpers ──────────────────────────────────────────────────────────────
-
-  function startVerification(action: () => Promise<void>) {
-    const code = generateCode()
-    setGeneratedCode(code)
-    // eslint-disable-next-line no-console
-    console.log('[Pixel Core] Verification code:', code)
-    setPendingAction(() => action)
-    setCodeDigits(['', '', '', '', '', ''])
-    setError('')
-    setResendTimer(30)
-    setStep('verify')
-  }
-
-  function handleResend() {
-    const code = generateCode()
-    setGeneratedCode(code)
-    // eslint-disable-next-line no-console
-    console.log('[Pixel Core] New verification code:', code)
-    setCodeDigits(['', '', '', '', '', ''])
-    setResendTimer(30)
-    setError('')
-    setTimeout(() => digitRefs.current[0]?.focus(), 80)
-  }
-
-  async function handleVerify(digits?: string[]) {
-    const entered = (digits ?? codeDigits).join('')
-    if (entered !== generatedCode) {
-      setError('Incorrect code. Please try again.')
-      setCodeDigits(['', '', '', '', '', ''])
-      setTimeout(() => digitRefs.current[0]?.focus(), 40)
-      return
-    }
-    setError('')
-    setLoading(true)
-    try {
-      await pendingAction?.()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Verification failed')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  function handleDigitChange(idx: number, val: string) {
-    const digit = val.replace(/\D/g, '').slice(-1)
-    const next  = [...codeDigits]
-    next[idx]   = digit
-    setCodeDigits(next)
-    if (digit && idx < 5) digitRefs.current[idx + 1]?.focus()
-    if (digit && idx === 5 && next.every(d => d)) handleVerify(next)
-  }
-
-  function handleDigitKeyDown(idx: number, e: React.KeyboardEvent) {
-    if (e.key === 'Backspace' && !codeDigits[idx] && idx > 0) {
-      digitRefs.current[idx - 1]?.focus()
-    }
-  }
-
-  function handlePaste(idx: number, e: React.ClipboardEvent) {
-    e.preventDefault()
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
-    if (!pasted) return
-    const next = [...codeDigits]
-    for (let i = 0; i < pasted.length && idx + i < 6; i++) next[idx + i] = pasted[i]
-    setCodeDigits(next)
-    const focusIdx = Math.min(idx + pasted.length, 5)
-    digitRefs.current[focusIdx]?.focus()
-    if (next.every(d => d)) handleVerify(next)
-  }
-
-  // ── form handlers ─────────────────────────────────────────────────────────
+  const inputCls =
+    'w-full px-4 py-3 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 transition'
 
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     if (!signInForm.email || !signInForm.password) return
-    startVerification(async () => {
+    setLoading(true)
+    try {
       await login(signInForm.email, signInForm.password)
       showToast('Welcome back!', 'success')
       onClose()
-    })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign in failed')
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function handleRegister(e: React.FormEvent) {
@@ -157,19 +58,17 @@ export default function AuthModal({ open, onClose, defaultTab = 'signin' }: Auth
     setError('')
     if (regForm.password !== regForm.confirm) { setError('Passwords do not match'); return }
     if (regForm.password.length < 6)          { setError('Password must be at least 6 characters'); return }
-    startVerification(async () => {
+    setLoading(true)
+    try {
       await register(regForm.name, regForm.email, regForm.password)
       showToast('Welcome to Pixel Core! Your 15% discount is active.', 'success')
       onClose()
-    })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Registration failed')
+    } finally {
+      setLoading(false)
+    }
   }
-
-  // ── styles ────────────────────────────────────────────────────────────────
-
-  const inputCls =
-    'w-full px-4 py-3 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30 transition'
-
-  // ── render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" onClick={onClose}>
@@ -178,7 +77,6 @@ export default function AuthModal({ open, onClose, defaultTab = 'signin' }: Auth
         className="relative w-full max-w-md bg-white rounded-2xl p-8 shadow-2xl animate-slide-up"
         onClick={e => e.stopPropagation()}
       >
-        {/* Close */}
         <button
           onClick={onClose}
           className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
@@ -189,211 +87,142 @@ export default function AuthModal({ open, onClose, defaultTab = 'signin' }: Auth
           </svg>
         </button>
 
-        {/* ── VERIFY STEP ─────────────────────────────────────────────────── */}
-        {step === 'verify' ? (
-          <div>
+        <div className="mb-6">
+          <h2 className="text-xl font-bold text-foreground">
+            {tab === 'signin' ? 'Welcome back' : 'Create your account'}
+          </h2>
+          {tab === 'register' && (
+            <p className="text-sm text-primary font-medium mt-1">✦ Get 15% off your first project</p>
+          )}
+        </div>
+
+        {/* Tab switcher */}
+        <div className="relative flex rounded-lg bg-gray-100 p-1 mb-6">
+          <div
+            className="absolute top-1 bottom-1 bg-white rounded-md shadow-sm transition-all duration-200"
+            style={{ left: tab === 'signin' ? '4px' : '50%', width: 'calc(50% - 4px)' }}
+          />
+          {(['signin', 'register'] as Tab[]).map(t => (
             <button
-              onClick={() => { setStep('form'); setError('') }}
-              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-5 transition-colors"
+              key={t}
+              onClick={() => setTab(t)}
+              className={`flex-1 py-2 text-sm font-medium relative z-10 transition-colors ${
+                tab === t ? 'text-foreground' : 'text-muted-foreground'
+              }`}
             >
-              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
-              </svg>
-              Back
+              {t === 'signin' ? 'Sign In' : 'Create Account'}
             </button>
+          ))}
+        </div>
 
-            <h2 className="text-xl font-bold text-foreground mb-1">Verify your identity</h2>
-            <p className="text-sm text-muted-foreground mb-7">
-              Enter the 6-digit code sent to your email.{' '}
-              <span className="text-xs text-primary">(Check browser console)</span>
-            </p>
-
-            {/* 6-digit input */}
-            <div className="flex gap-2 justify-center mb-6">
-              {codeDigits.map((digit, i) => (
-                <input
-                  key={i}
-                  ref={el => { digitRefs.current[i] = el }}
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={1}
-                  value={digit}
-                  onChange={e => handleDigitChange(i, e.target.value)}
-                  onKeyDown={e => handleDigitKeyDown(i, e)}
-                  onPaste={e => handlePaste(i, e)}
-                  className="w-11 h-13 text-center text-xl font-bold border-2 border-gray-200 rounded-lg focus:border-primary focus:outline-none transition-colors"
-                  style={{ height: '3.25rem' }}
-                />
-              ))}
-            </div>
-
-            {error && (
-              <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg mb-4">{error}</p>
-            )}
-
-            <button
-              onClick={() => handleVerify()}
-              disabled={loading || codeDigits.some(d => !d)}
-              className="w-full py-3.5 rounded-lg bg-primary text-white font-semibold text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 mb-4"
-            >
-              {loading ? 'Verifying…' : 'Confirm →'}
-            </button>
-
-            <div className="text-center text-sm text-muted-foreground">
-              {resendTimer > 0 ? (
-                <span>Resend code in {resendTimer}s</span>
-              ) : (
-                <button
-                  onClick={handleResend}
-                  className="text-primary font-medium hover:underline"
-                >
-                  Resend code
-                </button>
-              )}
-            </div>
-          </div>
-        ) : (
-          /* ── FORM STEP ──────────────────────────────────────────────────── */
-          <>
-            <div className="mb-6">
-              <h2 className="text-xl font-bold text-foreground">
-                {tab === 'signin' ? 'Welcome back' : 'Create your account'}
-              </h2>
-              {tab === 'register' && (
-                <p className="text-sm text-primary font-medium mt-1">✦ Get 15% off your first project</p>
-              )}
-            </div>
-
-            {/* Tab switcher */}
-            <div className="relative flex rounded-lg bg-gray-100 p-1 mb-6">
-              <div
-                className="absolute top-1 bottom-1 bg-white rounded-md shadow-sm transition-all duration-200"
-                style={{ left: tab === 'signin' ? '4px' : '50%', width: 'calc(50% - 4px)' }}
+        {tab === 'signin' ? (
+          <form onSubmit={handleSignIn} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1.5">Email</label>
+              <input
+                type="email" required placeholder="your@email.com"
+                value={signInForm.email}
+                onChange={e => setSignInForm(s => ({ ...s, email: e.target.value }))}
+                className={inputCls}
               />
-              {(['signin', 'register'] as Tab[]).map(t => (
-                <button
-                  key={t}
-                  onClick={() => setTab(t)}
-                  className={`flex-1 py-2 text-sm font-medium relative z-10 transition-colors ${
-                    tab === t ? 'text-foreground' : 'text-muted-foreground'
-                  }`}
-                >
-                  {t === 'signin' ? 'Sign In' : 'Create Account'}
-                </button>
-              ))}
             </div>
-
-            {tab === 'signin' ? (
-              <form onSubmit={handleSignIn} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">Email</label>
-                  <input
-                    type="email" required placeholder="your@email.com"
-                    value={signInForm.email}
-                    onChange={e => setSignInForm(s => ({ ...s, email: e.target.value }))}
-                    className={inputCls}
-                  />
-                </div>
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-sm font-medium text-foreground">Password</label>
-                    <button
-                      type="button"
-                      onClick={() => showToast('Feature coming soon', 'info')}
-                      className="text-xs text-primary hover:underline"
-                    >
-                      Forgot password?
-                    </button>
-                  </div>
-                  <input
-                    type="password" required placeholder="••••••••"
-                    value={signInForm.password}
-                    onChange={e => setSignInForm(s => ({ ...s, password: e.target.value }))}
-                    className={inputCls}
-                  />
-                </div>
-                {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-sm font-medium text-foreground">Password</label>
                 <button
-                  type="submit" disabled={loading}
-                  className="w-full py-3.5 rounded-lg bg-primary text-white font-semibold text-sm hover:bg-primary/90 transition-colors disabled:opacity-60"
+                  type="button"
+                  onClick={() => showToast('Feature coming soon', 'info')}
+                  className="text-xs text-primary hover:underline"
                 >
-                  {loading ? 'Signing in…' : 'Continue →'}
+                  Forgot password?
                 </button>
-                <p className="text-center text-sm text-muted-foreground">
-                  Don't have an account?{' '}
-                  <button type="button" onClick={() => setTab('register')} className="text-primary font-medium hover:underline">
-                    Sign up free
-                  </button>
-                </p>
-              </form>
-            ) : (
-              <form onSubmit={handleRegister} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">Full Name</label>
-                  <input
-                    type="text" required placeholder="Your full name"
-                    value={regForm.name}
-                    onChange={e => setRegForm(r => ({ ...r, name: e.target.value }))}
-                    className={inputCls}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">Email</label>
-                  <input
-                    type="email" required placeholder="your@email.com"
-                    value={regForm.email}
-                    onChange={e => setRegForm(r => ({ ...r, email: e.target.value }))}
-                    className={inputCls}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-1.5">Password</label>
-                    <input
-                      type="password" required placeholder="Min. 6 chars"
-                      value={regForm.password}
-                      onChange={e => setRegForm(r => ({ ...r, password: e.target.value }))}
-                      className={inputCls}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-foreground mb-1.5">Confirm</label>
-                    <input
-                      type="password" required placeholder="Repeat"
-                      value={regForm.confirm}
-                      onChange={e => setRegForm(r => ({ ...r, confirm: e.target.value }))}
-                      className={inputCls}
-                    />
-                  </div>
-                </div>
-                <label className="flex items-start gap-2.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={regForm.subscribe}
-                    onChange={e => setRegForm(r => ({ ...r, subscribe: e.target.checked }))}
-                    className="mt-0.5 accent-primary"
-                  />
-                  <span className="text-xs text-muted-foreground leading-relaxed">
-                    I agree to receive project updates and exclusive offers
-                  </span>
-                </label>
-                {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-                <button
-                  type="submit" disabled={loading}
-                  className="w-full py-3.5 rounded-lg bg-primary text-white font-semibold text-sm hover:bg-primary/90 transition-colors disabled:opacity-60"
-                >
-                  {loading ? 'Creating account…' : 'Continue →'}
-                </button>
-                <p className="text-center text-sm text-muted-foreground">
-                  Already have an account?{' '}
-                  <button type="button" onClick={() => setTab('signin')} className="text-primary font-medium hover:underline">
-                    Sign in
-                  </button>
-                </p>
-              </form>
-            )}
-          </>
+              </div>
+              <input
+                type="password" required placeholder="••••••••"
+                value={signInForm.password}
+                onChange={e => setSignInForm(s => ({ ...s, password: e.target.value }))}
+                className={inputCls}
+              />
+            </div>
+            {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+            <button
+              type="submit" disabled={loading}
+              className="w-full py-3.5 rounded-lg bg-primary text-white font-semibold text-sm hover:bg-primary/90 transition-colors disabled:opacity-60"
+            >
+              {loading ? 'Signing in…' : 'Sign In →'}
+            </button>
+            <p className="text-center text-sm text-muted-foreground">
+              Don't have an account?{' '}
+              <button type="button" onClick={() => setTab('register')} className="text-primary font-medium hover:underline">
+                Sign up free
+              </button>
+            </p>
+          </form>
+        ) : (
+          <form onSubmit={handleRegister} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1.5">Full Name</label>
+              <input
+                type="text" required placeholder="Your full name"
+                value={regForm.name}
+                onChange={e => setRegForm(r => ({ ...r, name: e.target.value }))}
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1.5">Email</label>
+              <input
+                type="email" required placeholder="your@email.com"
+                value={regForm.email}
+                onChange={e => setRegForm(r => ({ ...r, email: e.target.value }))}
+                className={inputCls}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1.5">Password</label>
+                <input
+                  type="password" required placeholder="Min. 6 chars"
+                  value={regForm.password}
+                  onChange={e => setRegForm(r => ({ ...r, password: e.target.value }))}
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1.5">Confirm</label>
+                <input
+                  type="password" required placeholder="Repeat"
+                  value={regForm.confirm}
+                  onChange={e => setRegForm(r => ({ ...r, confirm: e.target.value }))}
+                  className={inputCls}
+                />
+              </div>
+            </div>
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={regForm.subscribe}
+                onChange={e => setRegForm(r => ({ ...r, subscribe: e.target.checked }))}
+                className="mt-0.5 accent-primary"
+              />
+              <span className="text-xs text-muted-foreground leading-relaxed">
+                I agree to receive project updates and exclusive offers
+              </span>
+            </label>
+            {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+            <button
+              type="submit" disabled={loading}
+              className="w-full py-3.5 rounded-lg bg-primary text-white font-semibold text-sm hover:bg-primary/90 transition-colors disabled:opacity-60"
+            >
+              {loading ? 'Creating account…' : 'Create Account →'}
+            </button>
+            <p className="text-center text-sm text-muted-foreground">
+              Already have an account?{' '}
+              <button type="button" onClick={() => setTab('signin')} className="text-primary font-medium hover:underline">
+                Sign in
+              </button>
+            </p>
+          </form>
         )}
       </div>
     </div>
